@@ -146,9 +146,14 @@ export function AgentDashboard() {
           <Button onClick={() => setShowCreateDialog(true)}>
             Create Agent
           </Button>
+          {/* TODO: Add Button/Trigger for RegisterAdkAgentDialog here */}
+          {/* <RegisterAdkAgentDialog open={showRegisterAdkDialog} onOpenChange={setShowRegisterAdkDialog} /> */}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {/* TODO: Placeholder for listing ADK Agents */}
+          {/* A separate list or integrated into the main list, e.g.: */}
+          {/* adkAgents.map(adkAgent => <AdkAgentCard key={adkAgent.id} agent={adkAgent} />) */}
           {filteredAgents.map((agent) => (
             <AgentCard
               key={`agent-dashboard-${agent.assistant_id}`}

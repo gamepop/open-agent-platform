@@ -11,7 +11,9 @@ import { cn } from "@/lib/utils";
 import { useStreamContext } from "@/features/chat/providers/Stream";
 import { useState, FormEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { Checkpoint, Message } from "@langchain/langgraph-sdk";
+import { Checkpoint, Message as LangGraphMessage } from "@langchain/langgraph-sdk";
+// Import A2A types
+import { Task as A2ATask, Message as A2AMessage, Part as A2APart } from '@/types/a2a';
 import {
   AssistantMessage,
   AssistantMessageLoading,
@@ -290,39 +292,107 @@ export function Thread() {
       return;
     setFirstTokenReceived(false);
 
-    const newHumanMessage: Message = {
+    const newHumanMessage: LangGraphMessage = { // Assuming existing messages are LangGraphMessage type
       id: uuidv4(),
       type: "human",
       content: [
         ...(content.trim().length > 0 ? [{ type: "text", text: content }] : []),
         ...contentBlocks,
-      ] as Message["content"],
+      ] as LangGraphMessage["content"],
     };
 
-    const toolMessages = ensureToolCallsHaveResponses(stream.messages);
-    const { getAgentConfig } = useConfigStore.getState();
+    // TODO: Determine agent type (e.g., 'langgraph' or 'adk')
+    // This might involve:
+    // 1. Fetching the agent details from useAgentsContext().agents using the current `agentId`.
+    // 2. The `agents` array would need to include a `type` field or similar.
+    // For now, let's assume a variable `currentAgentType` and `currentAgentIdForAPI` exist.
+    // const currentAgent = agents.find(a => a.id === agentId); // This agentId is assistant_id for LangGraph
+    // const currentAgentType = currentAgent?.type; // Hypothetical: 'langgraph' | 'adk'
+    // const currentAgentIdForAPI = agentId; // For LangGraph, this is assistant_id. For ADK, this would be AdkAgentStoredData.id
 
-    stream.submit(
-      { messages: [...toolMessages, newHumanMessage] },
-      {
-        streamMode: ["values"],
-        optimisticValues: (prev) => ({
-          ...prev,
-          messages: [
-            ...(prev.messages ?? []),
-            ...toolMessages,
-            newHumanMessage,
-          ],
-        }),
-        config: {
-          configurable: getAgentConfig(agentId),
+    const currentAgentType = agentId === "adk-test-agent" ? "adk" : "langgraph"; // Placeholder for type detection
+    const currentAgentIdForAPI = agentId; // This needs to be the actual ADK agent ID if type is 'adk'
+
+    if (currentAgentType === "adk") {
+      // TODO: Ensure currentAgentIdForAPI is the ADK agent's stored ID (e.g., from AdkAgentStoredData.id)
+      console.log(`Sending message to ADK Agent (${currentAgentIdForAPI}) with input: ${content}`);
+
+      // Add human message to UI immediately (optimistic update)
+      // This part needs to be adapted to how messages are stored and rendered.
+      // For now, assuming stream.messages can be updated or a similar local state.
+      // stream.updateMessages([...stream.messages, newHumanMessage]); // Placeholder for UI update
+
+      fetch(`/api/adk-agents/${currentAgentIdForAPI}/invoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userInput: content, acceptedOutputModes: ['text/plain', 'application/json'] }),
+      })
+      .then(response => {
+        if (!response.ok) {
+          return response.json().then(err => { throw new Error(err.error || `Error invoking ADK agent: ${response.statusText}`) });
+        }
+        return response.json();
+      })
+      .then((adkResponse: A2ATask | A2AMessage) => {
+        console.log("ADK Agent Response:", adkResponse);
+        letresponseText = "Could not extract text from ADK response.";
+        if (adkResponse.kind === "task" && adkResponse.status?.message?.parts) {
+          responseText = adkResponse.status.message.parts
+            .filter((part: A2APart) => part.kind === 'text' && typeof (part as any).text === 'string')
+            .map((part: A2APart) => (part as any).text)
+            .join("\n");
+        } else if (adkResponse.kind === "task" && adkResponse.artifacts && adkResponse.artifacts.length > 0 && adkResponse.artifacts[0].parts) {
+          // Fallback to first artifact if status message is not present
+          responseText = adkResponse.artifacts[0].parts
+            .filter((part: A2APart) => part.kind === 'text' && typeof (part as any).text === 'string')
+            .map((part: A2APart) => (part as any).text)
+            .join("\n");
+        } else if (adkResponse.kind === "message" && adkResponse.parts) {
+          responseText = adkResponse.parts
+            .filter((part: A2APart) => part.kind === 'text' && typeof (part as any).text === 'string')
+            .map((part: A2APart) => (part as any).text)
+            .join("\n");
+        }
+        // TODO: Handle other part kinds (e.g., images, data) from A2A response.
+        // TODO: Construct an appropriate AI message object and add it to the chat display.
+        // This might involve calling a function like `stream.addMessage()` or updating local state.
+        // Example:
+        // const newAiMessage: LangGraphMessage = { id: uuidv4(), type: 'ai', content: [{type: "text", text: responseText}] };
+        // stream.updateMessages([...stream.messages, newAiMessage]); // Placeholder for UI update
+        toast.info(`ADK Response: ${responseText.substring(0,100)}...`);
+      })
+      .catch(error => {
+        console.error("Error invoking ADK agent:", error);
+        toast.error(`Failed to get response from ADK agent: ${error.message}`);
+        // TODO: Potentially add an error message to the chat UI.
+      });
+
+    } else { // Default to existing LangGraph logic
+      const toolMessages = ensureToolCallsHaveResponses(stream.messages);
+      const { getAgentConfig } = useConfigStore.getState();
+
+      stream.submit(
+        { messages: [...toolMessages, newHumanMessage] },
+        {
+          streamMode: ["values"],
+          optimisticValues: (prev) => ({
+            ...prev,
+            messages: [
+              ...(prev.messages ?? []),
+              ...toolMessages,
+              newHumanMessage,
+            ],
+          }),
+          config: {
+            configurable: getAgentConfig(agentId), // agentId here is LangGraph's assistant_id
+          },
+          metadata: {
+            supabaseAccessToken: session?.accessToken,
+          },
+          streamSubgraphs: true,
         },
-        metadata: {
-          supabaseAccessToken: session?.accessToken,
-        },
-        streamSubgraphs: true,
-      },
-    );
+      );
+    }
 
     form.reset();
     setContentBlocks([]);
@@ -330,8 +400,8 @@ export function Thread() {
 
   const handleRegenerate = (
     parentCheckpoint: Checkpoint | null | undefined,
-    optimisticValues?: (prev: { messages?: Message[] }) => {
-      messages?: Message[] | undefined;
+    optimisticValues?: (prev: { messages?: LangGraphMessage[] }) => { // Ensure type consistency
+      messages?: LangGraphMessage[] | undefined;
     },
   ) => {
     if (!agentId) return;
@@ -354,9 +424,9 @@ export function Thread() {
     });
   };
 
-  const hasMessages = messages.length > 0;
-  const hasNoAIOrToolMessages = !messages.find(
-    (m) => m.type === "ai" || m.type === "tool",
+  const hasMessages = stream.messages.length > 0; // Use stream.messages for consistency in rendering
+  const hasNoAIOrToolMessages = !stream.messages.find( // Use stream.messages
+    (m: LangGraphMessage) => m.type === "ai" || m.type === "tool",
   );
 
   return (
@@ -371,19 +441,19 @@ export function Thread() {
           contentClassName="pt-8 pb-16 max-w-3xl mx-auto flex flex-col gap-4 w-full"
           content={
             <>
-              {messages
-                .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
+              {stream.messages // Iterate over stream.messages for rendering
+                .filter((m: LangGraphMessage) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
                 .map((message, index) =>
                   message.type === "human" ? (
                     <HumanMessage
                       key={message.id || `${message.type}-${index}`}
-                      message={message}
+                      message={message as LangGraphMessage} // Cast to LangGraphMessage
                       isLoading={isLoading}
                     />
                   ) : (
                     <AssistantMessage
                       key={message.id || `${message.type}-${index}`}
-                      message={message}
+                      message={message as LangGraphMessage} // Cast to LangGraphMessage
                       isLoading={isLoading}
                       handleRegenerate={handleRegenerate}
                     />
