@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AdkAgentRegistrationPayload, AdkAgentStoredData, AgentCard } from '@/types/adk-agent';
-
-// TODO: Replace with actual database interactions
+import { AdkAgentStoredData, AgentCard } from '@/types/adk-agent'; // AdkAgentRegistrationPayload might not be needed here directly
+import { getAdkAgentById, updateAdkAgent, deleteAdkAgent } from '@/lib/adk-agent-db-mock';
+// TODO: Import a2aClientService for actual Agent Card fetching in a later step for PUT
+// import { a2aClientService } from '@/lib/a2a-client';
 
 interface RouteParams {
   params: {
@@ -37,21 +38,12 @@ interface RouteParams {
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const { agentId } = params;
-    // TODO: Fetch ADK agent with agentId from database
-    console.log(`Fetching ADK agent with ID: ${agentId}`);
-    // Placeholder: Simulate fetching data
-    if (agentId === "existing-uuid") {
-      const agent: AdkAgentStoredData = {
-        id: agentId,
-        name: "Fetched Agent",
-        a2aBaseUrl: "http://example.com/agent",
-        agentCard: { name: "Fetched Agent Card", url: "http://example.com/agent" },
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      return NextResponse.json(agent);
+    const agent = await getAdkAgentById(agentId);
+
+    if (!agent) {
+      return NextResponse.json({ error: "ADK Agent not found" }, { status: 404 });
     }
-    return NextResponse.json({ error: "Not found (placeholder)" }, { status: 404 });
+    return NextResponse.json({ agent }, { status: 200 });
   } catch (error) {
     console.error(`Error fetching ADK agent ${params.agentId}:`, error);
     return NextResponse.json({ error: 'Failed to fetch ADK agent' }, { status: 500 });
@@ -112,49 +104,61 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
     const { agentId } = params;
-    const body = await req.json(); // Should be Partial<AdkAgentRegistrationPayload> or similar
+    // Type assertion for the body, expect Partial updates relevant to AdkAgentStoredData fields
+    // but not allowing 'id', 'createdAt', 'updatedAt' to be set directly via payload.
+    const payload: Partial<Omit<AdkAgentStoredData, 'id' | 'createdAt' | 'updatedAt' | 'authentication'> & { authentication?: { type: 'apikey' | 'bearer'; token?: string; encryptedToken?: string } }> = await req.json();
 
-    // TODO: Fetch ADK agent with agentId from database
-    console.log(`Attempting to update ADK agent with ID: ${agentId}`, body);
-    // Placeholder: Simulate fetching and updating
-    if (agentId !== "existing-uuid") {
-      return NextResponse.json({ error: "Not found (placeholder) to update" }, { status: 404 });
+    // TODO: If payload.a2aBaseUrl is different from stored, re-fetch and re-validate Agent Card
+    // This would involve fetching the current agent data first.
+    // const currentAgent = await getAdkAgentById(agentId);
+    // if (!currentAgent) return NextResponse.json({ error: "ADK Agent not found for update" }, { status: 404 });
+    // if (payload.a2aBaseUrl && payload.a2aBaseUrl !== currentAgent.a2aBaseUrl) {
+    //   try {
+    //     const newAgentCard = await a2aClientService.fetchAgentCard(payload.a2aBaseUrl);
+    //     payload.agentCard = newAgentCard; // Update the agentCard in the payload
+    //     console.log("Agent card re-fetched due to a2aBaseUrl change.");
+    //   } catch (cardError: any) {
+    //     return NextResponse.json({ error: `Failed to fetch new Agent Card: ${cardError.message}` }, { status: 400 });
+    //   }
+    // }
+    if (payload.agentCard) { // If card is directly provided in payload (e.g. for testing mock)
+        console.log("Using agentCard from payload for update. In a real scenario, this should be fetched if a2aBaseUrl changes.");
     }
 
-    // TODO: Validate payload
-    // TODO: If a2aBaseUrl changed, re-fetch and re-validate Agent Card
-    if (body.a2aBaseUrl) {
-        const newAgentCardUrl = `${body.a2aBaseUrl.replace(/\/$/, "")}/.well-known/agent.json`;
-        console.log(`Agent Card URL would be re-fetched from: ${newAgentCardUrl} if it changed.`);
-        // const fetchedCardResponse = await fetch(newAgentCardUrl);
-        // if (!fetchedCardResponse.ok) {
-        //   return NextResponse.json({ error: `Failed to fetch Agent Card from ${newAgentCardUrl}. Status: ${fetchedCardResponse.status}` }, { status: 400 });
-        // }
-        // const newAgentCard: AgentCard = await fetchedCardResponse.json();
-        // TODO: Validate newAgentCard
-        // currentAgent.agentCard = newAgentCard;
+    // Simulate re-encryption if a new raw token is provided
+    // In a real implementation, you'd check if payload.authentication.token exists
+    // and then encrypt it, assigning to payload.authentication.encryptedToken.
+    // The updateAdkAgent function in mock DB doesn't handle nested auth object merge well by default for `token` vs `encryptedToken`.
+    // So, we prepare the `authentication` part of the payload carefully.
+    let authUpdatePayload: any = undefined;
+    if (payload.authentication) {
+        authUpdatePayload = { type: payload.authentication.type };
+        if (payload.authentication.token) {
+            // TODO: Implement actual token re-encryption
+            authUpdatePayload.encryptedToken = `encrypted-${payload.authentication.token}`;
+            console.log("Simulating token re-encryption for update.");
+            // The raw 'token' field should not be part of the final payload for updateAdkAgent
+        } else if (payload.authentication.encryptedToken) {
+            // If encrypted token is passed directly (e.g. from a system process, not user)
+            authUpdatePayload.encryptedToken = payload.authentication.encryptedToken;
+        }
     }
 
-    // TODO: Encrypt token if present and changed
-    if (body.authentication?.token) {
-        body.authentication.encryptedToken = `encrypted-${body.authentication.token}`;
-        delete body.authentication.token; // Remove raw token
-        console.log("Token would be re-encrypted if changed.");
+    const updateDataForDb: Partial<Omit<AdkAgentStoredData, 'id' | 'createdAt' | 'updatedAt'>> = { ...payload };
+    if (authUpdatePayload) {
+        updateDataForDb.authentication = authUpdatePayload;
+    } else if (payload.hasOwnProperty('authentication') && payload.authentication === null) {
+        // Explicitly setting auth to null/undefined if desired
+        updateDataForDb.authentication = undefined;
     }
 
-    // TODO: Update fields in the database
-    const updatedAgentData: AdkAgentStoredData = {
-        id: agentId,
-        name: body.name || "Existing Agent Name",
-        a2aBaseUrl: body.a2aBaseUrl || "http://example.com/agent",
-        authentication: body.authentication, // Potentially updated
-        agentCard: { name: "Updated Agent Card", url: body.a2aBaseUrl || "http://example.com/agent" }, // Potentially updated
-        createdAt: new Date().toISOString(), // Should be original creation date
-        updatedAt: new Date().toISOString(),
-    };
-    console.log("ADK Agent updated (placeholder):", updatedAgentData);
 
-    return NextResponse.json({ message: "ADK Agent updated (placeholder)", agent: updatedAgentData });
+    const updatedAgent = await updateAdkAgent(agentId, updateDataForDb);
+
+    if (!updatedAgent) {
+      return NextResponse.json({ error: "ADK Agent not found" }, { status: 404 });
+    }
+    return NextResponse.json({ message: "ADK Agent updated successfully", agent: updatedAgent }, { status: 200 });
   } catch (error) {
     console.error(`Error updating ADK agent ${params.agentId}:`, error);
     if (error instanceof SyntaxError) {
@@ -195,16 +199,12 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
     const { agentId } = params;
-    // TODO: Delete ADK agent with agentId from database
-    console.log(`Deleting ADK agent with ID: ${agentId}`);
+    const success = await deleteAdkAgent(agentId);
 
-    // Placeholder: Simulate deletion
-    if (agentId !== "existing-uuid") {
-      return NextResponse.json({ error: "Not found (placeholder) to delete" }, { status: 404 });
+    if (!success) {
+      return NextResponse.json({ error: "ADK Agent not found" }, { status: 404 });
     }
-
-    console.log("ADK Agent deleted (placeholder)");
-    return NextResponse.json({ message: "ADK Agent deleted (placeholder)" });
+    return NextResponse.json({ message: "ADK Agent deleted successfully" }, { status: 200 });
   } catch (error) {
     console.error(`Error deleting ADK agent ${params.agentId}:`, error);
     return NextResponse.json({ error: 'Failed to delete ADK agent' }, { status: 500 });

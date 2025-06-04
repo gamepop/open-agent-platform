@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AdkAgentRegistrationPayload, AgentCard, AdkAgentStoredData } from '@/types/adk-agent';
-import { v4 as uuidv4 } from 'uuid';
-
-// TODO: Replace with actual database interactions
+import { AdkAgentRegistrationPayload, AdkAgentStoredData } from '@/types/adk-agent';
+import { AgentCard } from '@/types/a2a'; // Import A2A AgentCard type
+// Removed uuidv4 as it's handled by the mock DB
+import { getAllAdkAgents, createAdkAgent } from '@/lib/adk-agent-db-mock';
+import { a2aClientService } from '@/lib/a2a-client';
 
 /**
  * @swagger
@@ -25,9 +26,8 @@ import { v4 as uuidv4 } from 'uuid';
  */
 export async function GET(req: NextRequest) {
   try {
-    // TODO: Fetch all registered ADK agents from database
-    const agents: AdkAgentStoredData[] = [];
-    return NextResponse.json({ agents });
+    const agents = await getAllAdkAgents();
+    return NextResponse.json({ agents }, { status: 200 });
   } catch (error) {
     console.error('Error fetching ADK agents:', error);
     return NextResponse.json({ error: 'Failed to fetch ADK agents' }, { status: 500 });
@@ -67,61 +67,67 @@ export async function POST(req: NextRequest) {
   try {
     const payload: AdkAgentRegistrationPayload = await req.json();
 
-    // TODO: Validate payload
+    // Basic payload validation (can be expanded with Zod or similar)
     if (!payload.name || !payload.a2aBaseUrl) {
       return NextResponse.json({ error: 'Missing required fields: name and a2aBaseUrl' }, { status: 400 });
     }
-
-    // TODO: Construct Agent Card URL (e.g., ${a2aBaseUrl}/.well-known/agent.json)
-    const agentCardUrl = `${payload.a2aBaseUrl.replace(/\/$/, "")}/.well-known/agent.json`;
-
-    // Placeholder: Fetch Agent Card from the URL
-    // In a real scenario, you would use a fetch library
-    console.log(`Fetching Agent Card from: ${agentCardUrl}`);
-    // const fetchedCardResponse = await fetch(agentCardUrl);
-    // if (!fetchedCardResponse.ok) {
-    //   return NextResponse.json({ error: `Failed to fetch Agent Card from ${agentCardUrl}. Status: ${fetchedCardResponse.status}` }, { status: 400 });
-    // }
-    // const agentCard: AgentCard = await fetchedCardResponse.json();
-    const agentCard: AgentCard = { // Placeholder data
-        name: "Placeholder Agent",
-        url: payload.a2aBaseUrl,
-        description: "This is a placeholder agent card.",
-        capabilities: { streaming: true },
-        skills: [{id: "skill1", name: "Placeholder Skill"}]
-    };
-
-
-    // TODO: Validate Agent Card structure
-    if (!agentCard.name || !agentCard.url) {
-        return NextResponse.json({ error: 'Invalid Agent Card structure: missing name or url' }, { status: 400 });
+    try {
+      new URL(payload.a2aBaseUrl); // Validate URL format
+    } catch (_) {
+      return NextResponse.json({ error: 'Invalid a2aBaseUrl format' }, { status: 400 });
     }
-    // More validation can be added here based on AgentCard interface
+
+    let agentCard: AgentCard;
+    try {
+        // The current fetchAgentCard in a2a-client.ts appends "/.well-known/agent.json" to the baseUrl.
+        console.log(`Attempting to fetch Agent Card from base URL: ${payload.a2aBaseUrl}`);
+        agentCard = await a2aClientService.fetchAgentCard(payload.a2aBaseUrl);
+
+        // Basic validation (can be expanded)
+        // Note: `kind: "agent-card"` is a good check if your AgentCard type includes it.
+        if (!agentCard.name || !agentCard.url || !agentCard.capabilities || !agentCard.skills || agentCard.kind !== 'agent-card') {
+            console.error("Fetched Agent Card is missing required fields or has wrong kind:", agentCard);
+            return NextResponse.json({ error: "Fetched Agent Card is invalid, incomplete, or not an AgentCard." }, { status: 400 });
+        }
+        console.log("Successfully fetched and validated Agent Card:", agentCard.name);
+
+    } catch (error: any) {
+        console.error("Failed to fetch or validate Agent Card:", error);
+        let errorMessage = "Failed to fetch or validate Agent Card from the provided A2A Base URL.";
+        if (error.message) {
+            errorMessage += ` Details: ${error.message}`;
+        }
+        // Return a 400 if it's likely a client-provided bad URL or the remote server responded with an error related to the card itself.
+        // A 502 might be more appropriate if our service (OAP) can't reach the remote agent's server due to network issues not directly tied to the URL being "bad".
+        // The current a2aClientService.fetchAgentCard throws an error with status if response.ok is false,
+        // or a generic error for network issues.
+        return NextResponse.json({ error: errorMessage }, { status: 400 });
+    }
 
 
-    // TODO: Encrypt token if present
+    // Simulating token encryption
     let encryptedToken: string | undefined = undefined;
     if (payload.authentication?.token) {
-        // Placeholder for encryption
-        encryptedToken = `encrypted-${payload.authentication.token}`;
-        console.log("Token would be encrypted here.");
+        // TODO: Implement actual token encryption (e.g., using a library like 'crypto-js' or a dedicated vault service)
+        encryptedToken = `encrypted-${payload.authentication.token}`; // Placeholder
+        console.log("Simulating token encryption for token:", payload.authentication.token.substring(0, 5) + "...");
     }
 
-    // Create AdkAgentStoredData object
-    const newAgent: AdkAgentStoredData = {
-      id: uuidv4(),
-      name: payload.name,
-      a2aBaseUrl: payload.a2aBaseUrl,
-      authentication: payload.authentication ? { type: payload.authentication.type, encryptedToken } : undefined,
-      agentCard: agentCard, // Store the fetched (or placeholder) agent card
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+    const agentToCreate = {
+        name: payload.name,
+        a2aBaseUrl: payload.a2aBaseUrl,
+        authentication: payload.authentication ? {
+            type: payload.authentication.type,
+            encryptedToken: encryptedToken, // Store the "encrypted" token
+            // DO NOT store payload.authentication.token (the raw token)
+        } : undefined,
+        agentCard: agentCard, // Store the fetched/mocked agent card
     };
 
-    // TODO: Save to database
-    console.log("ADK Agent to be saved (placeholder):", newAgent);
+    const newAgent = await createAdkAgent(agentToCreate);
+    console.log("ADK Agent created with mock DB:", newAgent);
 
-    return NextResponse.json({ message: "ADK Agent registered (placeholder)", agent: newAgent }, { status: 201 });
+    return NextResponse.json({ message: "ADK Agent registered successfully", agent: newAgent }, { status: 201 });
   } catch (error) {
     console.error('Error registering ADK agent:', error);
     if (error instanceof SyntaxError) {
