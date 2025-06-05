@@ -1,83 +1,120 @@
+import { z } from 'zod';
+
 // Based on A2A Specification v1.0 (or latest understanding)
 
 export interface AgentServiceEndpoint {
-  // Defines an endpoint for a specific A2A service like message, task, etc.
-  // This allows agents to expose different services at different URLs if needed.
-  // For simplicity, OAP might initially assume a single base URL for all A2A RPC calls.
-  name: "message" | "task" | "capabilities" | string; // Standard services or custom
-  url: string; // Full URL to the service endpoint
-  // Potentially other details like transport (e.g., "jsonrpc-http")
+  name: "message" | "task" | "capabilities" | string;
+  url: string;
+  // Potentially other details like transport
 }
+export const AgentServiceEndpointSchema = z.object({
+  name: z.union([z.literal("message"), z.literal("task"), z.literal("capabilities"), z.string()]),
+  url: z.string().url(),
+  // metadata: z.record(z.any()).optional(), // Example if needed
+});
+
 
 export interface AgentSkill {
-  id: string; // Unique identifier for the skill
-  name: string; // Human-readable name of the skill
-  description?: string; // Description of what the skill does
-  tags?: string[]; // Tags for categorization
-  examples?: string[]; // Example invocations or use cases
-
-  // Input/Output modes define how the skill can receive and send data.
-  // Examples: "text/plain", "application/json;schema=...", "image/png"
+  id: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+  examples?: string[];
   inputModes?: string[];
   outputModes?: string[];
-
-  // Additional metadata for the skill, could be UI hints or specific parameters
   metadata?: Record<string, any>;
 }
+export const AgentSkillSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  examples: z.array(z.string()).optional(),
+  inputModes: z.array(z.string()).optional(),
+  outputModes: z.array(z.string()).optional(),
+  metadata: z.record(z.any()).optional(),
+});
+
 
 export interface AgentCapabilities {
-  streaming?: boolean; // Does the agent support streaming responses (e.g., for messages)?
-  pushNotifications?: boolean; // Can the agent send push notifications?
-  stateTransitionHistory?: boolean; // Does the agent maintain and expose task state history?
-  extensions?: any[]; // List of supported A2A extensions
-  // Potentially other capabilities like supported authentication methods at a glance
+  streaming?: boolean;
+  pushNotifications?: boolean;
+  stateTransitionHistory?: boolean;
+  extensions?: any[]; // extensions can be complex, using z.array(z.any()) for now
 }
+export const AgentCapabilitiesSchema = z.object({
+  streaming: z.boolean().optional(),
+  pushNotifications: z.boolean().optional(),
+  stateTransitionHistory: z.boolean().optional(),
+  extensions: z.array(z.any()).optional(),
+});
 
+// Simplified placeholder for SecurityScheme due to its complexity and variability
 export interface SecurityScheme {
-  type: "http" | "apiKey" | "oauth2" | string; // Type of security scheme
+  type: "http" | "apiKey" | "oauth2" | string;
   description?: string;
-  // For "http"
-  scheme?: "bearer" | string; // e.g., "bearer"
-  // For "apiKey"
-  name?: string; // Name of the header or query parameter
-  in?: "header" | "query" | "cookie";
-  // For "oauth2"
-  flows?: any; // OAuth2 flows definition
-  // Other scheme-specific fields
+  scheme?: "bearer" | string; // For "http"
+  name?: string; // For "apiKey"
+  in?: "header" | "query" | "cookie"; // For "apiKey"
+  flows?: any; // For "oauth2"
 }
+export const SecuritySchemeSchema = z.object({
+  type: z.string().min(1),
+  description: z.string().optional(),
+  scheme: z.string().optional(), // For "http"
+  name: z.string().optional(), // For "apiKey"
+  in: z.enum(["header", "query", "cookie"]).optional(), // For "apiKey"
+  flows: z.any().optional(), // For "oauth2"
+}).catchall(z.any()); // Allow other fields
 
-export interface AgentCard {
-  kind: "agent-card"; // Identifies this as an AgentCard object
-  name: string; // Human-readable name of the agent
-  description?: string; // A summary of what the agent does
-  url: string; // The primary URL for A2A interactions (often the base for RPC calls)
-  iconUrl?: string; // URL to an icon for the agent
-  provider?: { // Information about the agent provider
+
+// Assuming a simple structure for AgentProvider for now
+export interface AgentProvider {
     name: string;
     url?: string;
-  };
-  version: string; // Version of the Agent Card or the agent itself
-  documentationUrl?: string; // URL to agent documentation
+}
+export const AgentProviderSchema = z.object({
+    name: z.string().min(1),
+    url: z.string().url().optional(),
+});
 
-  capabilities: AgentCapabilities; // Declared capabilities of the agent
 
-  // Security definitions
-  // Maps a security scheme name (e.g., "bearerAuth") to its definition.
+export interface AgentCard {
+  kind: "agent-card";
+  name: string;
+  description?: string;
+  url: string; // Primary A2A JSON-RPC service endpoint
+  iconUrl?: string;
+  provider?: AgentProvider;
+  version: string;
+  documentationUrl?: string;
+  capabilities: AgentCapabilities;
   securitySchemes?: Record<string, SecurityScheme>;
-  // Lists security requirements. Each item is a map where keys are scheme names
-  // and values are arrays of scopes (empty if no scopes).
-  // An empty array `[]` means no security. Multiple objects in the array are OR-ed.
-  security?: Array<Record<string, string[]>>;
-
-  // Default communication modes if not specified at the skill or message level
+  security?: Array<Record<string, string[]>>; // Array of security requirements objects
   defaultInputModes: string[];
   defaultOutputModes: string[];
-
-  skills: AgentSkill[]; // List of skills the agent offers
-
-  supportsAuthenticatedExtendedCard?: boolean; // If true, an authenticated GET to /.well-known/agent.json might return more details
-  serviceEndpoints?: AgentServiceEndpoint[]; // Optional: if agent exposes services at different URLs
-
-  // Additional metadata
+  skills: AgentSkill[];
+  supportsAuthenticatedExtendedCard?: boolean;
+  serviceEndpoints?: AgentServiceEndpoint[];
   metadata?: Record<string, any>;
 }
+export const AgentCardSchema = z.object({
+  kind: z.literal("agent-card"),
+  name: z.string().min(1, "Agent name is required"),
+  description: z.string().optional(),
+  url: z.string().url("Primary A2A service URL must be a valid URL"),
+  iconUrl: z.string().url().optional(),
+  provider: AgentProviderSchema.optional(),
+  version: z.string().min(1, "Agent version is required"),
+  documentationUrl: z.string().url().optional(),
+  capabilities: AgentCapabilitiesSchema, // Required
+  securitySchemes: z.record(SecuritySchemeSchema).optional(),
+  security: z.array(z.record(z.array(z.string()))).optional(),
+  defaultInputModes: z.array(z.string()), // Required, can be empty array
+  defaultOutputModes: z.array(z.string()), // Required, can be empty array
+  skills: z.array(AgentSkillSchema), // Required, can be empty array
+  supportsAuthenticatedExtendedCard: z.boolean().optional(),
+  serviceEndpoints: z.array(AgentServiceEndpointSchema).optional(),
+  metadata: z.record(z.any()).optional(),
+});
+

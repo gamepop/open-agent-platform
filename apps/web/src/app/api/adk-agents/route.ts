@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AdkAgentRegistrationPayload, AdkAgentStoredData } from '@/types/adk-agent';
-import { AgentCard } from '@/types/a2a'; // Import A2A AgentCard type
-// Removed uuidv4 as it's handled by the mock DB
-import { getAllAdkAgents, createAdkAgent } from '@/lib/adk-agent-db-mock';
+import { AgentCard, AgentCardSchema } from '@/types/a2a'; // Import A2A AgentCard type AND AgentCardSchema
+import { getAllAdkAgents, createAdkAgent } from '@/lib/adk-agent-service';
 import { a2aClientService } from '@/lib/a2a-client';
+import { encrypt } from '@/lib/encryption-service';
 
 /**
  * @swagger
@@ -77,22 +77,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid a2aBaseUrl format' }, { status: 400 });
     }
 
-    let agentCard: AgentCard;
+    let fetchedRawAgentCard: any; // To store the raw JSON before parsing
+    let agentCard: AgentCard; // To store the validated card data
     try {
         // The current fetchAgentCard in a2a-client.ts appends "/.well-known/agent.json" to the baseUrl.
         console.log(`Attempting to fetch Agent Card from base URL: ${payload.a2aBaseUrl}`);
-        agentCard = await a2aClientService.fetchAgentCard(payload.a2aBaseUrl);
+        // fetchAgentCard is expected to return a parsed JSON object already.
+        fetchedRawAgentCard = await a2aClientService.fetchAgentCard(payload.a2aBaseUrl);
 
-        // Basic validation (can be expanded)
-        // Note: `kind: "agent-card"` is a good check if your AgentCard type includes it.
-        if (!agentCard.name || !agentCard.url || !agentCard.capabilities || !agentCard.skills || agentCard.kind !== 'agent-card') {
-            console.error("Fetched Agent Card is missing required fields or has wrong kind:", agentCard);
-            return NextResponse.json({ error: "Fetched Agent Card is invalid, incomplete, or not an AgentCard." }, { status: 400 });
+        const parsedCard = AgentCardSchema.safeParse(fetchedRawAgentCard);
+
+        if (!parsedCard.success) {
+            console.error("Fetched Agent Card is invalid:", parsedCard.error.flatten());
+            return NextResponse.json({ error: "Fetched Agent Card is invalid.", details: parsedCard.error.flatten() }, { status: 400 });
         }
+
+        agentCard = parsedCard.data; // Use the validated data
         console.log("Successfully fetched and validated Agent Card:", agentCard.name);
 
     } catch (error: any) {
-        console.error("Failed to fetch or validate Agent Card:", error);
+        console.error("Failed to fetch Agent Card (or initial JSON parsing failed in client):", error);
         let errorMessage = "Failed to fetch or validate Agent Card from the provided A2A Base URL.";
         if (error.message) {
             errorMessage += ` Details: ${error.message}`;
@@ -105,23 +109,35 @@ export async function POST(req: NextRequest) {
     }
 
 
-    // Simulating token encryption
-    let encryptedToken: string | undefined = undefined;
-    if (payload.authentication?.token) {
-        // TODO: Implement actual token encryption (e.g., using a library like 'crypto-js' or a dedicated vault service)
-        encryptedToken = `encrypted-${payload.authentication.token}`; // Placeholder
-        console.log("Simulating token encryption for token:", payload.authentication.token.substring(0, 5) + "...");
+    // Token encryption
+    let finalEncryptedTokenValue: string | undefined = undefined;
+    if (payload.authentication?.token && payload.authentication.type !== 'none') {
+        try {
+            finalEncryptedTokenValue = await encrypt(payload.authentication.token);
+            console.log("Token encrypted (mock)");
+        } catch (encError) {
+            console.error("Mock encryption failed:", encError);
+            return NextResponse.json({ error: "Failed to process token (mock encryption)." }, { status: 500 });
+        }
+    } else if (payload.authentication?.type === 'none' && payload.authentication?.token) {
+        // If type is 'none', store the raw token directly in the 'encryptedToken' field for simplicity,
+        // as no encryption is applied.
+        finalEncryptedTokenValue = payload.authentication.token;
+        console.log("Authentication type is 'none', storing raw token.");
     }
+
+
 
     const agentToCreate = {
         name: payload.name,
         a2aBaseUrl: payload.a2aBaseUrl,
         authentication: payload.authentication ? {
             type: payload.authentication.type,
-            encryptedToken: encryptedToken, // Store the "encrypted" token
-            // DO NOT store payload.authentication.token (the raw token)
+            // Store raw token if type is 'none', otherwise the encrypted one
+            encryptedToken: finalEncryptedTokenValue,
         } : undefined,
-        agentCard: agentCard, // Store the fetched/mocked agent card
+        agentCard: agentCard,
+
     };
 
     const newAgent = await createAdkAgent(agentToCreate);

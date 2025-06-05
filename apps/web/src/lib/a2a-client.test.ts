@@ -1,20 +1,26 @@
-import { A2AClientService, a2aClientService } from './a2a-client';
-import { AgentCard, MessageSendParams, Task, Message, JSONRPCResponse, JSONRPCSuccessResponse, JSONRPCErrorResponse } from '@/types/a2a';
+import { A2AClientService } from './a2a-client'; // Use default export if singleton, or named if class
+import {
+    AgentCard,
+    MessageSendParams,
+    Task,
+    Message,
+    JSONRPCSuccessResponse,
+    JSONRPCErrorResponse,
+    TextPart,
+    TaskState
+} from '@/types/a2a';
 
 // Mocking global fetch
-// In a Jest environment, you might do:
-// global.fetch = jest.fn();
-// Or more robustly:
-// jest.spyOn(global, 'fetch');
-// For other test runners, the approach might vary (e.g., msw, sinon).
+const mockFetch = jest.fn();
+global.fetch = mockFetch;
 
 describe('A2AClientService', () => {
   let client: A2AClientService;
 
   beforeEach(() => {
-    client = new A2AClientService(); // Or use the singleton: client = a2aClientService;
-    // Reset fetch mock before each test if using jest.spyOn or jest.fn()
-    // (fetch as jest.Mock).mockClear();
+    client = new A2AClientService();
+    mockFetch.mockClear(); // Clear fetch mock before each test
+
   });
 
   describe('fetchAgentCard', () => {
@@ -24,148 +30,193 @@ describe('A2AClientService', () => {
       kind: 'agent-card',
       name: 'Test Agent',
       version: '1.0',
-      url: `${baseUrl}/a2a`,
+      url: `${baseUrl}/a2a`, // Service endpoint
       capabilities: { streaming: false },
       defaultInputModes: ['text/plain'],
       defaultOutputModes: ['text/plain'],
-      skills: [{ id: 'skill1', name: 'Test Skill' }],
-      // ... other required fields
+      skills: [{ id: 'skill1', name: 'Test Skill', description: 'Does something cool' }],
     };
 
     it('should fetch and return an AgentCard on success', async () => {
-      // Mock fetch to return a successful response with valid AgentCard JSON
-      // Example using jest.fn():
-      // (fetch as jest.Mock).mockResolvedValueOnce({
-      //   ok: true,
-      //   json: async () => mockAgentCard,
-      //   text: async () => JSON.stringify(mockAgentCard), // for error logging if needed
-      // });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockAgentCard,
+        text: async () => JSON.stringify(mockAgentCard),
+      } as Response);
 
-      // const card = await client.fetchAgentCard(baseUrl);
-      // expect(fetch).toHaveBeenCalledWith(agentCardUrl, expect.any(Object));
-      // expect(card).toEqual(mockAgentCard);
-      expect(true).toBe(true); // Placeholder assertion
+      const card = await client.fetchAgentCard(baseUrl);
+      expect(mockFetch).toHaveBeenCalledWith(agentCardUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+      });
+      expect(card).toEqual(mockAgentCard);
     });
 
-    it('should throw an error if the network response is not ok', async () => {
-      // Mock fetch to return an error status
-      // (fetch as jest.Mock).mockResolvedValueOnce({
-      //   ok: false,
-      //   status: 404,
-      //   text: async () => "Not Found",
-      // });
+    it('should throw an error if the network response is not ok (e.g. 404)', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => "Not Found",
+      } as Response);
 
-      // await expect(client.fetchAgentCard(baseUrl)).rejects.toThrow('Failed to fetch Agent Card');
-      expect(true).toBe(true); // Placeholder assertion
+      await expect(client.fetchAgentCard(baseUrl))
+        .rejects
+        .toThrow(`Failed to fetch Agent Card from ${agentCardUrl}. Status: 404`);
     });
+
+    it('should throw an error if the network response is not ok (e.g. 500)', async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: async () => "Server Error",
+        } as Response);
+
+        await expect(client.fetchAgentCard(baseUrl))
+          .rejects
+          .toThrow(`Failed to fetch Agent Card from ${agentCardUrl}. Status: 500`);
+      });
 
     it('should throw an error if the response is not valid JSON', async () => {
-      // Mock fetch to return ok, but with invalid JSON
-      // (fetch as jest.Mock).mockResolvedValueOnce({
-      //   ok: true,
-      //   json: async () => { throw new SyntaxError("Unexpected token < in JSON"); },
-      //   text: async () => "<invalid json>",
-      // });
-      // await expect(client.fetchAgentCard(baseUrl)).rejects.toThrow(SyntaxError);
-      expect(true).toBe(true); // Placeholder assertion
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => { throw new SyntaxError("Unexpected token < in JSON"); },
+        text: async () => "<invalid json>",
+      } as Response);
+      await expect(client.fetchAgentCard(baseUrl)).rejects.toThrow(SyntaxError);
     });
 
     it('should throw an error on network failure', async () => {
-      // Mock fetch to simulate a network error
-      // (fetch as jest.Mock).mockRejectedValueOnce(new TypeError('Network request failed'));
-      // await expect(client.fetchAgentCard(baseUrl)).rejects.toThrow(TypeError);
-      expect(true).toBe(true); // Placeholder assertion
+      mockFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
+      await expect(client.fetchAgentCard(baseUrl)).rejects.toThrow(TypeError);
+
     });
   });
 
   describe('sendMessage', () => {
     const a2aServiceUrl = 'http://fake-agent.com/a2a';
+    const textPart: TextPart = { kind: 'text', text: 'Hello' };
+
     const mockMessageSendParams: MessageSendParams = {
       message: {
         kind: 'message',
         messageId: 'msg1',
         role: 'user',
-        parts: [{ kind: 'text', text: 'Hello' }],
+        parts: [textPart],
       },
     };
+
     const mockTaskResponse: Task = {
       kind: 'task',
       id: 'task1',
       contextId: 'ctx1',
-      status: { state: 'completed' },
-      // ... other required fields
-    };
-    const mockSuccessRpcResponse: JSONRPCSuccessResponse = {
-      jsonrpc: '2.0',
-      id: 'oap-a2a-123',
-      result: mockTaskResponse,
+      status: { state: TaskState.Completed, message: { kind: 'message', messageId: 'resp-msg', role: 'agent', parts: [textPart] } },
+      history: [],
+      artifacts: [],
     };
 
-    it('should send a message and return the result on success', async () => {
-      // Mock fetch for a successful JSON-RPC response
-      // (fetch as jest.Mock).mockResolvedValueOnce({
-      //   ok: true,
-      //   json: async () => mockSuccessRpcResponse,
-      // });
+    const mockMessageResponse: Message = {
+        kind: 'message',
+        messageId: 'resp-msg-direct',
+        role: 'agent',
+        parts: [textPart],
+    };
 
-      // const result = await client.sendMessage(a2aServiceUrl, mockMessageSendParams);
-      // expect(fetch).toHaveBeenCalledWith(a2aServiceUrl, expect.objectContaining({
-      //   method: 'POST',
-      //   body: expect.stringContaining('"method":"message/send"'),
-      // }));
-      // expect(result).toEqual(mockTaskResponse);
-      expect(true).toBe(true); // Placeholder assertion
+    it('should send a message and return a Task result on success', async () => {
+      const mockRpcSuccessResponse: JSONRPCSuccessResponse = {
+        jsonrpc: '2.0',
+        id: expect.any(String), // ID is dynamically generated
+        result: mockTaskResponse,
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockRpcSuccessResponse,
+      } as Response);
+
+      const result = await client.sendMessage(a2aServiceUrl, mockMessageSendParams);
+      expect(mockFetch).toHaveBeenCalledWith(a2aServiceUrl, expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: expect.stringContaining(`"method":"message/send","params":${JSON.stringify(mockMessageSendParams)}`),
+      }));
+      expect(result).toEqual(mockTaskResponse);
     });
 
+    it('should send a message and return a Message result on success', async () => {
+        const mockRpcSuccessResponse: JSONRPCSuccessResponse = {
+          jsonrpc: '2.0',
+          id: expect.any(String),
+          result: mockMessageResponse,
+        };
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockRpcSuccessResponse,
+        } as Response);
+
+        const result = await client.sendMessage(a2aServiceUrl, mockMessageSendParams);
+        expect(result).toEqual(mockMessageResponse);
+      });
+
     it('should include Authorization header if authToken is provided', async () => {
-      // (fetch as jest.Mock).mockResolvedValueOnce({
-      //   ok: true,
-      //   json: async () => mockSuccessRpcResponse,
-      // });
-      const authToken = 'test-token';
-      // await client.sendMessage(a2aServiceUrl, mockMessageSendParams, authToken);
-      // expect(fetch).toHaveBeenCalledWith(a2aServiceUrl, expect.objectContaining({
-      //   headers: expect.objectContaining({
-      //     'Authorization': `Bearer ${authToken}`,
-      //     'Content-Type': 'application/json',
-      //   }),
-      // }));
-      expect(true).toBe(true); // Placeholder assertion
+      const mockRpcSuccessResponse: JSONRPCSuccessResponse = {
+        jsonrpc: '2.0',
+        id: expect.any(String),
+        result: mockTaskResponse,
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockRpcSuccessResponse,
+      } as Response);
+      const authToken = 'test-bearer-token';
+      await client.sendMessage(a2aServiceUrl, mockMessageSendParams, authToken);
+
+      expect(mockFetch).toHaveBeenCalledWith(a2aServiceUrl, expect.objectContaining({
+        headers: expect.objectContaining({
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        }),
+      }));
     });
 
     it('should throw an error if JSON-RPC response contains an error', async () => {
-      const mockErrorRpcResponse: JSONRPCErrorResponse = {
+      const mockRpcErrorResponse: JSONRPCErrorResponse = {
         jsonrpc: '2.0',
-        id: 'oap-a2a-123',
-        error: { code: -32000, message: 'Server error' },
+        id: 'oap-a2a-error-id',
+        error: { code: -32000, message: 'A2A Specific Server error' },
       };
-      // (fetch as jest.Mock).mockResolvedValueOnce({
-      //   ok: true,
-      //   json: async () => mockErrorRpcResponse,
-      // });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockRpcErrorResponse,
+      } as Response);
 
-      // await expect(client.sendMessage(a2aServiceUrl, mockMessageSendParams))
-      //   .rejects.toThrow('A2A message/send failed: Server error (Code: -32000)');
-      expect(true).toBe(true); // Placeholder assertion
+      await expect(client.sendMessage(a2aServiceUrl, mockMessageSendParams))
+        .rejects.toThrow('A2A message/send failed: A2A Specific Server error (Code: -32000)');
     });
 
-    it('should throw an error if the network response is not ok', async () => {
-      // (fetch as jest.Mock).mockResolvedValueOnce({
-      //   ok: false,
-      //   status: 500,
-      //   text: async () => "Internal Server Error",
-      // });
+    it('should throw an error if the network response for sendMessage is not ok', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => "Internal Server Error",
+      } as Response);
 
-      // await expect(client.sendMessage(a2aServiceUrl, mockMessageSendParams))
-      //   .rejects.toThrow('A2A message/send request failed. Status: 500');
-      expect(true).toBe(true); // Placeholder assertion
+      await expect(client.sendMessage(a2aServiceUrl, mockMessageSendParams))
+        .rejects.toThrow('A2A message/send request failed. Status: 500');
     });
 
-    it('should throw an error on network failure', async () => {
-      // (fetch as jest.Mock).mockRejectedValueOnce(new TypeError('Network request failed'));
-      // await expect(client.sendMessage(a2aServiceUrl, mockMessageSendParams))
-      //   .rejects.toThrow(TypeError);
-      expect(true).toBe(true); // Placeholder assertion
+    it('should throw an error on network failure for sendMessage', async () => {
+      mockFetch.mockRejectedValueOnce(new TypeError('Network request failed for send'));
+      await expect(client.sendMessage(a2aServiceUrl, mockMessageSendParams))
+        .rejects.toThrow('Network request failed for send');
     });
+
+    it('should throw an error if sendMessage response is not valid JSON', async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: async () => { throw new SyntaxError("Bad JSON in sendMessage"); },
+          text: async () => "<invalid json>",
+        } as Response);
+        await expect(client.sendMessage(a2aServiceUrl, mockMessageSendParams)).rejects.toThrow(SyntaxError);
+      });
   });
 });

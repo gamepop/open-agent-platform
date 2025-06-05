@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AdkAgentStoredData } from '@/types/adk-agent';
 import { Message, MessageSendParams, Task, AgentCard } from '@/types/a2a';
-import { a2aClientService } from '@/lib/a2a-client'; // Assuming singleton export
+import { a2aClientService } from '@/lib/a2a-client';
+import { decrypt } from '@/lib/encryption-service';
+
 
 interface InvokeRouteParams {
   params: {
@@ -152,16 +154,27 @@ export async function POST(req: NextRequest, { params }: InvokeRouteParams) {
       },
       metadata: customConfig,
     };
+    let authTokenToUse: string | undefined = undefined;
+    if (agentData.authentication?.encryptedToken && agentData.authentication.type !== 'none') {
+        try {
+            authTokenToUse = await decrypt(agentData.authentication.encryptedToken);
+            console.log("Token decrypted (mock) for invoke API call");
+        } catch (decError) {
+            console.error("Mock decryption failed for invoke API call:", decError);
+            return NextResponse.json({ error: "Failed to prepare authentication for ADK agent (mock decryption)." }, { status: 500 });
+        }
+    } else if (agentData.authentication?.type === 'none' && agentData.authentication?.encryptedToken) {
+        // If type is 'none', the encryptedToken field holds the raw token
+        authTokenToUse = agentData.authentication.encryptedToken;
+        console.log("Using raw token for invoke API call as auth type is 'none'.");
+    }
 
-    // Use the encrypted token from storage. The A2AClientService expects the raw token.
-    // For this placeholder, we assume encryptedToken might be the raw token if not truly encrypted.
-    // In a real scenario, decryption would happen here or passed to a secure vault accessor.
-    const authToken = agentData.authentication?.encryptedToken; // Simplified: assuming this is usable as Bearer
 
     const result: Task | Message = await a2aClientService.sendMessage(
       a2aServiceEndpoint,
       sendParams,
-      authToken,
+      authTokenToUse,
+
     );
 
     return NextResponse.json(result);

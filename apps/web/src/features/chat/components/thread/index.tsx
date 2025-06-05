@@ -206,7 +206,10 @@ function NewThreadButton(props: { hasMessages: boolean }) {
 }
 
 export function Thread() {
-  const [agentId] = useQueryState("agentId");
+  const [agentIdQueryParam] = useQueryState("agentId"); // Renamed to avoid conflict with agentId from context
+  const { agents: allAgents, loading: agentsLoading } = useAgentsContext(); // Get all agents
+  const [currentAgent, setCurrentAgent] = useState<any | null>(null); // To store the full current agent object
+
   const [hideToolCalls, setHideToolCalls] = useQueryState(
     "hideToolCalls",
     parseAsBoolean.withDefault(false),
@@ -225,9 +228,9 @@ export function Thread() {
 
   const { session } = useAuthContext();
 
-  const stream = useStreamContext();
-  const messages = stream.messages;
-  const isLoading = stream.isLoading;
+  const stream = useStreamContext(); // This likely provides addMessage, updateMessage etc.
+  const messages = stream.messages; // Assuming this is the source of truth for displayed messages
+  const isLoading = stream.isLoading; // General loading state
 
   const lastError = useRef<string | undefined>(undefined);
   const [errorMessage, setErrorMessage] = useState("");
@@ -268,81 +271,115 @@ export function Thread() {
     if (
       messages.length !== prevMessageLength.current &&
       messages?.length &&
-      messages[messages.length - 1].type === "ai"
+      messages[messages.length - 1].type === "ai" &&
+      currentAgent?.agentType !== 'adk' // Only set for non-ADK agents, ADK handles its loading separately
     ) {
       setFirstTokenReceived(true);
     }
-
     prevMessageLength.current = messages.length;
-  }, [messages]);
+  }, [messages, currentAgent?.agentType]);
 
-  const handleSubmit = (e: FormEvent) => {
+
+  // Derive currentAgent from agentIdQueryParam and allAgents
+  useEffect(() => {
+    if (agentIdQueryParam && allAgents.length > 0) {
+      // This assumes `allAgents` contains both LangGraph and ADK agent representations.
+      // And that ADK agents have an `id` field matching agentIdQueryParam, and an `agentType: 'adk'` field.
+      // LangGraph agents use `assistant_id`. This logic might need refinement based on actual agent data structure.
+      const foundAgent = allAgents.find(
+        (a: any) => a.id === agentIdQueryParam || a.assistant_id === agentIdQueryParam
+      );
+      if (foundAgent) {
+        // Simulate agentType if not present. Ideally, the context provides this.
+        // For ADK, we might check for a unique property like `a2aBaseUrl`.
+        // For LangGraph, it might be the presence of `assistant_id` and lack of `a2aBaseUrl`.
+        const simulatedAgentType = foundAgent.a2aBaseUrl ? 'adk' : 'langgraph';
+        setCurrentAgent({ ...foundAgent, agentType: foundAgent.agentType || simulatedAgentType });
+      } else {
+        setCurrentAgent(null);
+      }
+    } else {
+      setCurrentAgent(null);
+    }
+  }, [agentIdQueryParam, allAgents]);
+
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
     const form = e.currentTarget as HTMLFormElement;
     const formData = new FormData(form);
-    const content = (formData.get("input") as string | undefined)?.trim() ?? "";
+    const userInput = (formData.get("input") as string | undefined)?.trim() ?? "";
 
     setHasInput(false);
-    if (!agentId) return;
-    if (
-      (content.trim().length === 0 && contentBlocks.length === 0) ||
-      isLoading
-    )
+    if (!currentAgent) {
+      toast.error("No agent selected.");
       return;
-    setFirstTokenReceived(false);
+    }
+    if ((userInput.length === 0 && contentBlocks.length === 0) || isLoading) return;
 
-    const newHumanMessage: LangGraphMessage = { // Assuming existing messages are LangGraphMessage type
-      id: uuidv4(),
-      type: "human",
-      content: [
-        ...(content.trim().length > 0 ? [{ type: "text", text: content }] : []),
-        ...contentBlocks,
-      ] as LangGraphMessage["content"],
+    // Common human message structure (adapt 'type' if your rendering differentiates)
+    const humanMessagePayload = {
+      id: uuidv4(), // Temporary ID for optimistic update if needed
+      role: 'human' as const,
+      content: userInput, // Assuming simple text for now, contentBlocks need to be handled
+      type: 'message', // Or a more generic type if LangGraphMessage and ADK messages differ
     };
+    // If contentBlocks are used, they need to be transformed into the 'content' array format
+    // similar to how newHumanMessage was constructed before. For simplicity, this example focuses on text.
+    if (contentBlocks.length > 0) {
+      humanMessagePayload.content = JSON.stringify(contentBlocks); // Placeholder, handle properly
+      // Or convert to the expected parts array structure
+    }
 
-    // TODO: Determine agent type (e.g., 'langgraph' or 'adk')
-    // This might involve:
-    // 1. Fetching the agent details from useAgentsContext().agents using the current `agentId`.
-    // 2. The `agents` array would need to include a `type` field or similar.
-    // For now, let's assume a variable `currentAgentType` and `currentAgentIdForAPI` exist.
-    // const currentAgent = agents.find(a => a.id === agentId); // This agentId is assistant_id for LangGraph
-    // const currentAgentType = currentAgent?.type; // Hypothetical: 'langgraph' | 'adk'
-    // const currentAgentIdForAPI = agentId; // For LangGraph, this is assistant_id. For ADK, this would be AdkAgentStoredData.id
 
-    const currentAgentType = agentId === "adk-test-agent" ? "adk" : "langgraph"; // Placeholder for type detection
-    const currentAgentIdForAPI = agentId; // This needs to be the actual ADK agent ID if type is 'adk'
+    // Agent Type Detection and Specific Logic
+    // Assumes currentAgent object has an 'agentType' property or a distinguishable field like 'a2aBaseUrl'.
+    // console.log("Current Agent for submit:", currentAgent);
 
-    if (currentAgentType === "adk") {
-      // TODO: Ensure currentAgentIdForAPI is the ADK agent's stored ID (e.g., from AdkAgentStoredData.id)
-      console.log(`Sending message to ADK Agent (${currentAgentIdForAPI}) with input: ${content}`);
+    if (currentAgent.agentType === 'adk') {
+      setFirstTokenReceived(false); // Reset for ADK specific loading if any
 
-      // Add human message to UI immediately (optimistic update)
-      // This part needs to be adapted to how messages are stored and rendered.
-      // For now, assuming stream.messages can be updated or a similar local state.
-      // stream.updateMessages([...stream.messages, newHumanMessage]); // Placeholder for UI update
+      // Optimistic UI for Human Message (ADK Flow)
+      // Assuming stream.addOptimisticMessage or similar exists.
+      // If not, this needs to be handled by directly updating a local message state.
+      // const optimisticId = stream.addOptimisticMessage(humanMessagePayload.content, "human");
+      // For now, let's assume direct addition for simplicity if optimistic methods aren't confirmed:
+      if (typeof stream.addMessage === 'function') {
+         // stream.addMessage(humanMessagePayload); // This might not be the right way if stream is only for LangGraph
+         // We'll manually construct and add to a local message list or assume stream.messages can be appended to.
+         // For this exercise, we'll assume stream.messages is the array and we can update it.
+         // This is a placeholder for actual state management.
+         const tempId = uuidv4();
+         stream.setMessages([...stream.messages, { ...humanMessagePayload, id: tempId, type: 'human' }]);
+         console.log("Optimistically added ADK human message (placeholder)");
+      } else {
+        console.warn("stream.addMessage function not found. UI will not update optimistically for human message.");
+      }
 
-      fetch(`/api/adk-agents/${currentAgentIdForAPI}/invoke`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userInput: content, acceptedOutputModes: ['text/plain', 'application/json'] }),
-      })
-      .then(response => {
+
+      try {
+        const response = await fetch(`/api/adk-agents/${currentAgent.id}/invoke`, { // Use currentAgent.id (ADK agent's stored ID)
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userInput: userInput, acceptedOutputModes: ['text/plain', 'application/json'] }),
+        });
+
         if (!response.ok) {
-          return response.json().then(err => { throw new Error(err.error || `Error invoking ADK agent: ${response.statusText}`) });
+          const errData = await response.json().catch(() => ({ error: `Error invoking ADK agent: ${response.statusText}` }));
+          throw new Error(errData.error || `Error invoking ADK agent: ${response.statusText}`);
         }
-        return response.json();
-      })
-      .then((adkResponse: A2ATask | A2AMessage) => {
+
+        const adkResponse: A2ATask | A2AMessage = await response.json();
         console.log("ADK Agent Response:", adkResponse);
-        letresponseText = "Could not extract text from ADK response.";
+        let responseText = "Could not extract text from ADK response.";
+
         if (adkResponse.kind === "task" && adkResponse.status?.message?.parts) {
           responseText = adkResponse.status.message.parts
             .filter((part: A2APart) => part.kind === 'text' && typeof (part as any).text === 'string')
             .map((part: A2APart) => (part as any).text)
             .join("\n");
         } else if (adkResponse.kind === "task" && adkResponse.artifacts && adkResponse.artifacts.length > 0 && adkResponse.artifacts[0].parts) {
-          // Fallback to first artifact if status message is not present
           responseText = adkResponse.artifacts[0].parts
             .filter((part: A2APart) => part.kind === 'text' && typeof (part as any).text === 'string')
             .map((part: A2APart) => (part as any).text)
@@ -353,26 +390,62 @@ export function Thread() {
             .map((part: A2APart) => (part as any).text)
             .join("\n");
         }
-        // TODO: Handle other part kinds (e.g., images, data) from A2A response.
-        // TODO: Construct an appropriate AI message object and add it to the chat display.
-        // This might involve calling a function like `stream.addMessage()` or updating local state.
-        // Example:
-        // const newAiMessage: LangGraphMessage = { id: uuidv4(), type: 'ai', content: [{type: "text", text: responseText}] };
-        // stream.updateMessages([...stream.messages, newAiMessage]); // Placeholder for UI update
-        toast.info(`ADK Response: ${responseText.substring(0,100)}...`);
-      })
-      .catch(error => {
+
+        const aiMessage = {
+          id: uuidv4(), // Or use an ID from adkResponse if available and suitable
+          role: 'ai' as const,
+          content: responseText,
+          type: 'message' // Ensure this type is handled by your rendering logic
+        };
+
+        // Update UI with AI response
+        // if (optimisticId && typeof stream.updateOptimisticMessage === 'function') {
+        //   stream.updateOptimisticMessage(optimisticId, aiMessage.content, "ai", aiMessage.id);
+        // } else if (typeof stream.addMessage === 'function') {
+        //    stream.addMessage(aiMessage); // Add as a new message
+        // }
+        // Placeholder for actual state management:
+        stream.setMessages([...stream.messages, aiMessage]);
+        console.log("Added ADK AI response to messages (placeholder)");
+
+
+      } catch (error: any) {
         console.error("Error invoking ADK agent:", error);
         toast.error(`Failed to get response from ADK agent: ${error.message}`);
-        // TODO: Potentially add an error message to the chat UI.
-      });
+        const errorMessage = {
+          id: uuidv4(),
+          role: 'ai' as const,
+          content: `Error interacting with ADK agent: ${error.message}`,
+          type: 'error' // Ensure this type is handled by your rendering logic
+        };
+        // Add error message to chat UI
+        // if (typeof stream.addMessage === 'function') {
+        //    stream.addMessage(errorMessage);
+        // }
+        // Placeholder for actual state management:
+        stream.setMessages([...stream.messages, errorMessage]);
+        console.log("Added ADK error message to messages (placeholder)");
+      }
 
-    } else { // Default to existing LangGraph logic
+    } else { // Default to existing LangGraph logic (currentAgent is LangGraph type)
+      setFirstTokenReceived(false); // Reset for LangGraph
+      const langGraphHumanMessage: LangGraphMessage = {
+        id: humanMessagePayload.id, // Use the same ID
+        type: "human", // LangGraph specific type
+        content: [ // LangGraph expects an array of content parts
+          ...(userInput.length > 0 ? [{ type: "text", text: userInput }] : []),
+          ...contentBlocks, // Assuming contentBlocks are already in LangGraph format
+        ] as LangGraphMessage["content"],
+      };
+
+
       const toolMessages = ensureToolCallsHaveResponses(stream.messages);
       const { getAgentConfig } = useConfigStore.getState();
 
       stream.submit(
-        { messages: [...toolMessages, newHumanMessage] },
+
+        { messages: [...toolMessages, langGraphHumanMessage] },
+
         {
           streamMode: ["values"],
           optimisticValues: (prev) => ({
@@ -380,11 +453,13 @@ export function Thread() {
             messages: [
               ...(prev.messages ?? []),
               ...toolMessages,
-              newHumanMessage,
+
+              langGraphHumanMessage,
             ],
           }),
           config: {
-            configurable: getAgentConfig(agentId), // agentId here is LangGraph's assistant_id
+            configurable: getAgentConfig(currentAgent.assistant_id), // Use assistant_id for LangGraph
+
           },
           metadata: {
             supabaseAccessToken: session?.accessToken,
@@ -400,14 +475,19 @@ export function Thread() {
 
   const handleRegenerate = (
     parentCheckpoint: Checkpoint | null | undefined,
-    optimisticValues?: (prev: { messages?: LangGraphMessage[] }) => { // Ensure type consistency
+    optimisticValues?: (prev: { messages?: LangGraphMessage[] }) => {
+
       messages?: LangGraphMessage[] | undefined;
     },
   ) => {
-    if (!agentId) return;
-    const { getAgentConfig } = useConfigStore.getState();
+    if (!currentAgent || currentAgent.agentType === 'adk') {
+      // TODO: Implement regenerate for ADK if possible/needed, or disable button
+      toast.info("Regenerate is not currently supported for ADK agents.");
+      return;
+    }
+    if (!currentAgent.assistant_id) return; // Should not happen if type is langgraph
 
-    // Do this so the loading state is correct
+    const { getAgentConfig } = useConfigStore.getState();
     prevMessageLength.current = prevMessageLength.current - 1;
     setFirstTokenReceived(false);
     stream.submit(undefined, {
