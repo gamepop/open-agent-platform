@@ -438,11 +438,14 @@ export function Thread() {
         ] as LangGraphMessage["content"],
       };
 
+
       const toolMessages = ensureToolCallsHaveResponses(stream.messages);
       const { getAgentConfig } = useConfigStore.getState();
 
       stream.submit(
+
         { messages: [...toolMessages, langGraphHumanMessage] },
+
         {
           streamMode: ["values"],
           optimisticValues: (prev) => ({
@@ -450,11 +453,13 @@ export function Thread() {
             messages: [
               ...(prev.messages ?? []),
               ...toolMessages,
+
               langGraphHumanMessage,
             ],
           }),
           config: {
             configurable: getAgentConfig(currentAgent.assistant_id), // Use assistant_id for LangGraph
+
           },
           metadata: {
             supabaseAccessToken: session?.accessToken,
@@ -471,6 +476,7 @@ export function Thread() {
   const handleRegenerate = (
     parentCheckpoint: Checkpoint | null | undefined,
     optimisticValues?: (prev: { messages?: LangGraphMessage[] }) => {
+
       messages?: LangGraphMessage[] | undefined;
     },
   ) => {

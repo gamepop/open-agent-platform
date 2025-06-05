@@ -5,6 +5,7 @@ import { getAdkAgentById, updateAdkAgent, deleteAdkAgent } from '@/lib/adk-agent
 import { a2aClientService } from '@/lib/a2a-client';
 import { encrypt } from '@/lib/encryption-service';
 
+
 interface RouteParams {
   params: {
     agentId: string;
@@ -181,6 +182,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
             }
         }
         // If payload.authentication is undefined, it means no change to auth, so currentAgent.authentication will be preserved by updateAdkAgent
+
     }
 
 

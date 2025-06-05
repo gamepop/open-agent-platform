@@ -61,6 +61,7 @@ describe('/api/adk-agents', () => {
       expect(response.status).toBe(500);
       expect(body).toEqual({ error: 'Failed to fetch ADK agents' });
     });
+
   });
 
   describe('POST', () => {

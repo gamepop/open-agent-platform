@@ -127,6 +127,7 @@ export async function POST(req: NextRequest) {
     }
 
 
+
     const agentToCreate = {
         name: payload.name,
         a2aBaseUrl: payload.a2aBaseUrl,
@@ -136,6 +137,7 @@ export async function POST(req: NextRequest) {
             encryptedToken: finalEncryptedTokenValue,
         } : undefined,
         agentCard: agentCard,
+
     };
 
     const newAgent = await createAdkAgent(agentToCreate);

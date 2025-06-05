@@ -20,6 +20,7 @@ describe('A2AClientService', () => {
   beforeEach(() => {
     client = new A2AClientService();
     mockFetch.mockClear(); // Clear fetch mock before each test
+
   });
 
   describe('fetchAgentCard', () => {
@@ -87,12 +88,14 @@ describe('A2AClientService', () => {
     it('should throw an error on network failure', async () => {
       mockFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
       await expect(client.fetchAgentCard(baseUrl)).rejects.toThrow(TypeError);
+
     });
   });
 
   describe('sendMessage', () => {
     const a2aServiceUrl = 'http://fake-agent.com/a2a';
     const textPart: TextPart = { kind: 'text', text: 'Hello' };
+
     const mockMessageSendParams: MessageSendParams = {
       message: {
         kind: 'message',

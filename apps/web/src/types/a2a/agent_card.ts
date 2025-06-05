@@ -117,3 +117,4 @@ export const AgentCardSchema = z.object({
   serviceEndpoints: z.array(AgentServiceEndpointSchema).optional(),
   metadata: z.record(z.any()).optional(),
 });
+

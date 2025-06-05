@@ -4,6 +4,7 @@ import { Message, MessageSendParams, Task, AgentCard } from '@/types/a2a';
 import { a2aClientService } from '@/lib/a2a-client';
 import { decrypt } from '@/lib/encryption-service';
 
+
 interface InvokeRouteParams {
   params: {
     agentId: string;
@@ -153,7 +154,6 @@ export async function POST(req: NextRequest, { params }: InvokeRouteParams) {
       },
       metadata: customConfig,
     };
-
     let authTokenToUse: string | undefined = undefined;
     if (agentData.authentication?.encryptedToken && agentData.authentication.type !== 'none') {
         try {
@@ -169,10 +169,12 @@ export async function POST(req: NextRequest, { params }: InvokeRouteParams) {
         console.log("Using raw token for invoke API call as auth type is 'none'.");
     }
 
+
     const result: Task | Message = await a2aClientService.sendMessage(
       a2aServiceEndpoint,
       sendParams,
       authTokenToUse,
+
     );
 
     return NextResponse.json(result);

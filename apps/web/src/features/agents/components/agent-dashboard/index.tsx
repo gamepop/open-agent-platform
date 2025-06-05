@@ -224,6 +224,8 @@ export function AgentDashboard() {
           <Button variant="outline" onClick={() => setShowRegisterAdkDialog(true)}>
             <PlusCircle className="mr-2 h-4 w-4" /> Register ADK Agent
           </Button>
+          {/* TODO: Add Button/Trigger for RegisterAdkAgentDialog here */}
+          {/* <RegisterAdkAgentDialog open={showRegisterAdkDialog} onOpenChange={setShowRegisterAdkDialog} /> */}
         </div>
       ) : (
         <>
@@ -305,6 +307,7 @@ export function AgentDashboard() {
     </div>
   );
 }
+
               agent={agent}
               showDeployment={true}
             />
